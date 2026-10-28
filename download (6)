@@ -1,0 +1,121 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import { Shirt, Sparkles, LayoutGrid, PlusCircle } from 'lucide-react'
+import { AddTab } from '@/components/wardrobe/add-tab'
+import { WardrobeTab } from '@/components/wardrobe/wardrobe-tab'
+import { OutfitsTab } from '@/components/wardrobe/outfits-tab'
+import { parseWardrobeItem, type WardrobeItem } from '@/lib/wardrobe-client'
+
+type TabKey = 'add' | 'wardrobe' | 'outfits'
+
+const TABS: Array<{ key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { key: 'add', label: 'Добавить вещь', icon: PlusCircle },
+  { key: 'wardrobe', label: 'Мой гардероб', icon: LayoutGrid },
+  { key: 'outfits', label: 'Образы и анализ', icon: Sparkles },
+]
+
+export default function Home() {
+  const [tab, setTab] = useState<TabKey>('add')
+  const [items, setItems] = useState<WardrobeItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [outfitsSelectedId, setOutfitsSelectedId] = useState<string | null>(null)
+
+  const loadItems = useCallback(async () => {
+    try {
+      const res = await fetch('/api/items')
+      const json = await res.json()
+      if (res.ok && Array.isArray(json.items)) {
+        setItems(json.items.map(parseWardrobeItem))
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки гардероба:', error)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadItems()
+  }, [loadItems])
+
+  const handleCheckOutfit = (itemId: string) => {
+    setOutfitsSelectedId(itemId)
+    setTab('outfits')
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col bg-[#f7f5f2]">
+      {/* Шапка */}
+      <header className="sticky top-0 z-40 border-b border-stone-200/70 bg-[#f7f5f2]/85 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-900 text-white shadow-sm">
+              <Shirt className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold leading-tight tracking-tight text-stone-900">Гардероб AI</h1>
+              <p className="text-xs text-stone-500">распознавание одежды и умный подбор образов</p>
+            </div>
+          </div>
+
+          <nav aria-label="Разделы приложения" className="grid grid-cols-3 gap-1 rounded-xl bg-stone-900/5 p-1 lg:w-auto">
+            {TABS.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                aria-current={tab === key ? 'page' : undefined}
+                className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all sm:px-4 ${
+                  tab === key
+                    ? 'bg-stone-900 text-white shadow-sm'
+                    : 'text-stone-600 hover:bg-white/60 hover:text-stone-900'
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+                <span className="hidden sm:inline">{label}</span>
+                <span className="sm:hidden">{label.split(' ')[0]}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      {/* Контент */}
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
+        {tab === 'add' && (
+          <section aria-label="Добавление вещи" className="animate-fade-up">
+            <AddTab onSaved={loadItems} onCheckOutfit={handleCheckOutfit} />
+          </section>
+        )}
+        {tab === 'wardrobe' && (
+          <section aria-label="Библиотека гардероба" className="animate-fade-up">
+            <WardrobeTab
+              items={items}
+              loading={loading}
+              onDeleted={loadItems}
+              onCheckOutfit={handleCheckOutfit}
+              onGoAdd={() => setTab('add')}
+            />
+          </section>
+        )}
+        {tab === 'outfits' && (
+          <section aria-label="Образы и анализ совместимости" className="animate-fade-up">
+            <OutfitsTab
+              items={items}
+              selectedId={outfitsSelectedId}
+              onSelect={setOutfitsSelectedId}
+              onRefresh={loadItems}
+            />
+          </section>
+        )}
+      </main>
+
+      {/* Подвал */}
+      <footer className="mt-auto border-t border-stone-200/70 bg-white/50">
+        <div className="mx-auto max-w-7xl px-4 py-4 text-center text-xs text-stone-400 sm:px-6">
+          Гардероб AI · распознаёт любую одежду по фото и подсказывает, что с чем носить
+        </div>
+      </footer>
+    </div>
+  )
+}

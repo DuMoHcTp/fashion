@@ -1,0 +1,261 @@
+import ZAI from 'z-ai-web-dev-sdk'
+
+// ---------- Типы ----------
+
+export interface AnalyzedItem {
+  name: string
+  category: string
+  subtype: string
+  colors: string[]
+  style: string
+  seasons: string[]
+  material: string | null
+  description: string
+}
+
+export interface ItemMatch {
+  id: string
+  name: string
+  score: number
+  reason: string
+}
+
+export interface OutfitSuggestion {
+  title: string
+  items: string[] // названия вещей
+  occasion: string
+  description: string
+}
+
+export interface MatchAnalysisResult {
+  score: number
+  summary: string
+  matches: ItemMatch[]
+  outfits: OutfitSuggestion[]
+  gaps: string[]
+}
+
+// ---------- Утилиты ----------
+
+export const CATEGORIES = [
+  'Верх',
+  'Низ',
+  'Платье',
+  'Верхняя одежда',
+  'Обувь',
+  'Нижнее бельё',
+  'Аксессуар',
+] as const
+
+export const SEASONS = ['Весна', 'Лето', 'Осень', 'Зима', 'Демисезон'] as const
+
+const VALID_STYLES = [
+  'Повседневный',
+  'Деловой',
+  'Спортивный',
+  'Вечерний',
+  'Романтичный',
+  'Уличный',
+  'Минимализм',
+  'Классический',
+]
+
+function extractJson(raw: string): unknown {
+  // Убираем markdown-обёртки ```json ... ```
+  let text = raw.trim()
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fence) text = fence[1].trim()
+  // Пытаемся найти JSON-объект в тексте
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start !== -1 && end !== -1 && end > start) {
+    text = text.slice(start, end + 1)
+  }
+  return JSON.parse(text)
+}
+
+function asStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  return v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((s) => s.trim())
+}
+
+// ---------- Распознавание одежды по фото ----------
+
+const ANALYZE_SYSTEM_PROMPT = `Ты — эксперт-стилист и товаровед одежды. Тебе присылают фотографию предмета одежды или обуви (возможны нижнее бельё, аксессуары, головные уборы и т.д.). Твоя задача — точно определить, что это за вещь, и вернуть СТРОГО валидный JSON без каких-либо пояснений.
+
+Формат ответа:
+{
+  "name": "короткое продающее название на русском (3-6 слов), например «Синие джинсы прямого кроя»",
+  "category": "одна из категорий: Верх | Низ | Платье | Верхняя одежда | Обувь | Нижнее бельё | Аксессуар",
+  "subtype": "конкретный тип на русском с уточнением фасона, например «джинсы прямого кроя», «бомбер», «лодочки на каблуке»",
+  "colors": ["1-3 основных цвета на русском, точные названия: «тёмно-синий», «молочный», «горчичный»"],
+  "style": "основной стиль, одно значение из: Повседневный | Деловой | Спортивный | Вечерний | Романтичный | Уличный | Минимализм | Классический",
+  "seasons": ["подходящие сезоны из: Весна | Лето | Осень | Зима | Демисезон"],
+  "material": "предполагаемый материал или null",
+  "description": "1-2 предложения: особенности фасона, деталей, посадки. На русском."
+}
+
+Правила:
+- Если на фото несколько предметов одежды, опиши главный (самый заметный) предмет.
+- Цвета определяй по фактическому изображению.
+- Отвечай ТОЛЬКО JSON, без markdown и текста вокруг.`
+
+export async function analyzeClothingImage(base64: string, mimeType: string): Promise<AnalyzedItem> {
+  const zai = await ZAI.create()
+
+  const response = await zai.chat.completions.createVision({
+    messages: [
+      { role: 'system', content: ANALYZE_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Определи эту вещь одежды и верни JSON по формату.' },
+          {
+            type: 'image_url',
+            image_url: { url: `data:${mimeType};base64,${base64}` },
+          },
+        ],
+      },
+    ],
+    thinking: { type: 'disabled' },
+  })
+
+  const content: string = response?.choices?.[0]?.message?.content ?? ''
+  if (!content) throw new Error('Пустой ответ модели распознавания')
+
+  const parsed = extractJson(content) as Record<string, unknown>
+
+  const category = typeof parsed.category === 'string' ? parsed.category : 'Верх'
+  const normalizedCategory =
+    CATEGORIES.find((c) => c.toLowerCase() === category.toLowerCase()) ??
+    CATEGORIES.find((c) => category.toLowerCase().includes(c.split(' ')[0].toLowerCase())) ??
+    'Верх'
+
+  const styleRaw = typeof parsed.style === 'string' ? parsed.style : 'Повседневный'
+  const style = VALID_STYLES.find((s) => s.toLowerCase() === styleRaw.toLowerCase()) ?? 'Повседневный'
+
+  const colors = asStringArray(parsed.colors).slice(0, 3)
+  const seasons = asStringArray(parsed.seasons).filter((s) =>
+    SEASONS.some((v) => v.toLowerCase() === s.toLowerCase()),
+  )
+
+  return {
+    name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : 'Новая вещь',
+    category: normalizedCategory,
+    subtype: typeof parsed.subtype === 'string' && parsed.subtype.trim() ? parsed.subtype.trim() : 'предмет одежды',
+    colors: colors.length ? colors : ['нейтральный'],
+    style,
+    seasons: seasons.length ? seasons : ['Демисезон'],
+    material:
+      typeof parsed.material === 'string' && parsed.material.trim() && parsed.material !== 'null'
+        ? parsed.material.trim()
+        : null,
+    description: typeof parsed.description === 'string' ? parsed.description.trim() : '',
+  }
+}
+
+// ---------- Анализ совместимости с гардеробом ----------
+
+export interface WardrobeItemBrief {
+  id: string
+  name: string
+  category: string
+  subtype: string
+  colors: string[]
+  style: string
+  seasons: string[]
+  material: string | null
+}
+
+export async function analyzeWardrobeMatch(
+  target: WardrobeItemBrief,
+  wardrobe: WardrobeItemBrief[],
+): Promise<MatchAnalysisResult> {
+  const zai = await ZAI.create()
+
+  const wardrobeList = wardrobe
+    .map(
+      (i, idx) =>
+        `${idx + 1}. id="${i.id}" — ${i.name}; категория: ${i.category}; тип: ${i.subtype}; цвета: ${i.colors.join(', ')}; стиль: ${i.style}; сезоны: ${i.seasons.join(', ')}${i.material ? `; материал: ${i.material}` : ''}`,
+    )
+    .join('\n')
+
+  const systemPrompt = `Ты — профессиональный стилист. Пользователь добавил новую вещь в гардероб и хочет понять, сочетается ли она с уже имеющимися вещами, и какие образы можно составить. Верни СТРОГО валидный JSON без пояснений.
+
+Формат ответа:
+{
+  "score": 0-100, // насколько новая вещь вписывается в гардероб в целом
+  "summary": "2-3 предложения: как новая вещь вписывается в гардероб, её сильные стороны и риски",
+  "matches": [ // ТОП-5 самых совместимых вещей из гардероба (кроме новой вещи)
+    { "id": "id вещи", "name": "название", "score": 0-100, "reason": "почему сочетается (1 предложение)" }
+  ],
+  "outfits": [ // 3-4 готовых образа с использованием новой вещи
+    {
+      "title": "название образа",
+      "items": ["точные названия вещей из списка гардероба (включая новую вещь)"],
+      "occasion": "повод: офис, прогулка, свидание, спорт, вечер и т.п.",
+      "description": "1-2 предложения почему образ работает"
+    }
+  ],
+  "gaps": ["чего не хватает в гардеробе для более полных образов с этой вещью — 2-3 пункта"]
+}
+
+Правила:
+- Оценивай сочетаемость по цвету, стилю, формальности, сезону.
+- В outfits используй только реальные названия вещей из списка ниже.
+- matches бери только из существующих id.
+- Отвечай ТОЛЬКО JSON.`
+
+  const userPrompt = `НОВАЯ ВЕЩЬ:
+id="${target.id}" — ${target.name}; категория: ${target.category}; тип: ${target.subtype}; цвета: ${target.colors.join(', ')}; стиль: ${target.style}; сезоны: ${target.seasons.join(', ')}${target.material ? `; материал: ${target.material}` : ''}
+
+ОСТАЛЬНОЙ ГАРДЕРОБ (${wardrobe.length} вещей):
+${wardrobeList || '(гардероб пуст, кроме новой вещи)'}`
+
+  const response = await zai.chat.completions.create({
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    thinking: { type: 'disabled' },
+  })
+
+  const content: string = response?.choices?.[0]?.message?.content ?? ''
+  if (!content) throw new Error('Пустой ответ модели анализа')
+
+  const parsed = extractJson(content) as Record<string, unknown>
+
+  const rawMatches = Array.isArray(parsed.matches) ? parsed.matches : []
+  const validIds = new Set(wardrobe.map((w) => w.id))
+  const matches: ItemMatch[] = rawMatches
+    .map((m) => m as Record<string, unknown>)
+    .filter((m) => typeof m.id === 'string' && validIds.has(m.id))
+    .slice(0, 5)
+    .map((m) => ({
+      id: m.id as string,
+      name: typeof m.name === 'string' ? m.name : '',
+      score: Math.max(0, Math.min(100, Math.round(Number(m.score) || 0))),
+      reason: typeof m.reason === 'string' ? m.reason : '',
+    }))
+
+  const rawOutfits = Array.isArray(parsed.outfits) ? parsed.outfits : []
+  const outfits: OutfitSuggestion[] = rawOutfits
+    .map((o) => o as Record<string, unknown>)
+    .slice(0, 4)
+    .map((o) => ({
+      title: typeof o.title === 'string' ? o.title : 'Образ',
+      items: asStringArray(o.items).slice(0, 6),
+      occasion: typeof o.occasion === 'string' ? o.occasion : '',
+      description: typeof o.description === 'string' ? o.description : '',
+    }))
+
+  const gaps = asStringArray(parsed.gaps).slice(0, 3)
+
+  return {
+    score: Math.max(0, Math.min(100, Math.round(Number(parsed.score) || 0))),
+    summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+    matches,
+    outfits,
+    gaps,
+  }
+}

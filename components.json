@@ -1,0 +1,202 @@
+// Клиентские типы и хелперы приложения «Гардероб AI»
+
+export interface ParsedMatch {
+  id: string
+  name: string
+  score: number
+  reason: string
+}
+
+export interface ParsedOutfit {
+  title: string
+  items: string[]
+  occasion: string
+  description: string
+}
+
+export interface ParsedMatchAnalysis {
+  id: string
+  itemId: string
+  score: number
+  summary: string
+  matches: ParsedMatch[]
+  outfits: ParsedOutfit[]
+  gaps: string[]
+  updatedAt: string
+}
+
+export interface WardrobeItem {
+  id: string
+  name: string
+  category: string
+  subtype: string
+  colors: string[]
+  style: string
+  seasons: string[]
+  material: string | null
+  description: string
+  imageUrl: string
+  createdAt: string
+  match: ParsedMatchAnalysis | null
+}
+
+// Разбор JSON-строк из ответа API
+export function parseWardrobeItem(raw: Record<string, unknown>): WardrobeItem {
+  const parseArr = (v: unknown): string[] => {
+    try {
+      const arr = typeof v === 'string' ? JSON.parse(v) : v
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  let match: ParsedMatchAnalysis | null = null
+  const m = raw.match as Record<string, unknown> | null | undefined
+  if (m && typeof m === 'object' && typeof m.score === 'number') {
+    const tryParse = (v: unknown, fb: unknown) => {
+      try {
+        return typeof v === 'string' ? JSON.parse(v) : v ?? fb
+      } catch {
+        return fb
+      }
+    }
+    match = {
+      id: String(m.id ?? ''),
+      itemId: String(m.itemId ?? ''),
+      score: Number(m.score) || 0,
+      summary: String(m.summary ?? ''),
+      matches: tryParse(m.matches, []) as ParsedMatch[],
+      outfits: tryParse(m.outfits, []) as ParsedOutfit[],
+      gaps: tryParse(m.gaps, []) as string[],
+      updatedAt: String(m.updatedAt ?? ''),
+    }
+  }
+
+  return {
+    id: String(raw.id),
+    name: String(raw.name ?? ''),
+    category: String(raw.category ?? ''),
+    subtype: String(raw.subtype ?? ''),
+    colors: parseArr(raw.colors),
+    style: String(raw.style ?? ''),
+    seasons: parseArr(raw.seasons),
+    material: raw.material ? String(raw.material) : null,
+    description: String(raw.description ?? ''),
+    imageUrl: String(raw.imageUrl ?? ''),
+    createdAt: String(raw.createdAt ?? ''),
+    match,
+  }
+}
+
+// ---------- Категории ----------
+
+export const CATEGORY_LIST = [
+  'Верх',
+  'Низ',
+  'Платье',
+  'Верхняя одежда',
+  'Обувь',
+  'Нижнее бельё',
+  'Аксессуар',
+]
+
+export const STYLE_LIST = [
+  'Повседневный',
+  'Деловой',
+  'Спортивный',
+  'Вечерний',
+  'Романтичный',
+  'Уличный',
+  'Минимализм',
+  'Классический',
+]
+
+export const SEASON_LIST = ['Весна', 'Лето', 'Осень', 'Зима', 'Демисезон']
+
+// ---------- Цвет точек ----------
+
+const COLOR_HEX_RULES: Array<[string, string]> = [
+  ['серебр', '#c3c7cc'],
+  ['сер', '#98989d'],
+  ['чёрн', '#26262b'],
+  ['черн', '#26262b'],
+  ['бел', '#fdfdfb'],
+  ['молоч', '#f6f1e7'],
+  ['крем', '#f1e8d6'],
+  ['красн', '#d0413c'],
+  ['алый', '#e23d3d'],
+  ['борд', '#77283a'],
+  ['вишн', '#a03a4b'],
+  ['розов', '#e6a4b4'],
+  ['пудр', '#e9c6ca'],
+  ['малин', '#c93a63'],
+  ['оранж', '#e87b35'],
+  ['рыж', '#c66a3a'],
+  ['терракот', '#c26449'],
+  ['ржав', '#a85232'],
+  ['жёлт', '#e3b71f'],
+  ['желт', '#e3b71f'],
+  ['горчич', '#c8a128'],
+  ['золот', '#cda63c'],
+  ['лимон', '#ead23f'],
+  ['зелён', '#3f7d4c'],
+  ['зелен', '#3f7d4c'],
+  ['изумруд', '#2a8a68'],
+  ['оливк', '#7c7f40'],
+  ['хаки', '#8b8a5a'],
+  ['мятн', '#9ed4c1'],
+  ['бирюз', '#2fa8a0'],
+  ['голуб', '#83b4da'],
+  ['син', '#2c4c80'],
+  ['небес', '#a8cdea'],
+  ['индиго', '#3f4a8a'],
+  ['фиолет', '#6d4a9e'],
+  ['сирен', '#a98bc4'],
+  ['лилов', '#9c7cba'],
+  ['беж', '#dcc9b1'],
+  ['песоч', '#d9c49a'],
+  ['коричн', '#8a5a3c'],
+  ['шокол', '#5b3b29'],
+  ['каштан', '#6b3b30'],
+  ['кофе', '#6b4a35'],
+  ['графит', '#4a4a50'],
+  ['тёмно', '#33333a'],
+  ['темно', '#33333a'],
+  ['нефрит', '#3a8a72'],
+]
+
+export function colorHex(colorName: string): string {
+  const lower = colorName.toLowerCase()
+  for (const [key, hex] of COLOR_HEX_RULES) {
+    if (lower.includes(key)) return hex
+  }
+  return '#b6ae9f' // нейтральный фолбэк
+}
+
+// ---------- Форматирование даты ----------
+
+export function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return ''
+  }
+}
+
+// ---------- Оценка совместимости ----------
+
+export function scoreColor(score: number): { stroke: string; text: string; label: string } {
+  if (score >= 70) {
+    return { stroke: '#2e9e6b', text: 'text-emerald-700', label: 'Отлично вписывается' }
+  }
+  if (score >= 45) {
+    return { stroke: '#d99a2b', text: 'text-amber-600', label: 'Хорошо, но с нюансами' }
+  }
+  return { stroke: '#d04f4f', text: 'text-red-600', label: 'Выпадает из гардероба' }
+}
